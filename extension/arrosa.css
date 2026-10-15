@@ -9,13 +9,53 @@
 
 @media (prefers-color-scheme: dark) {
 
-  /* Compose y sección seleccionada: relleno. Pedido: #E11D48, demasiado saturado para lo
-     que el filtro de inversión puede mostrar; #ff8aa1 es el más cercano que conserva el
-     tono (~#d4516a en pantalla). */
-  html body .T-I.T-I-KE.L3,
-  html body .TO.nZ,
-  html body .aim.ain .TO {
-    background-color: #ff8aa1 !important;
+  /* Paleta "rosa contorno" (v1.1), en espacio pre-filtro. Todos estos tonos caben en lo
+     que el filtro puede mostrar, así que en pantalla salen exactos:
+       rosa base   #D85A74  ->  pre rgb(244, 132, 155)
+       rosa claro  #EFBAC5  ->  pre #74454f   (rosa base mezclado 42 % con blanco)
+     Las transparencias se conservan tal cual: el filtro es afín y no altera la mezcla. */
+
+  /* Compose: solo borde rosa al 70 %, texto e icono en rosa claro, sin relleno.
+     Clases comprobadas en Gmail (oct. 2026): .T-I.T-I-KE.L3; el lápiz es un PNG en ::before. */
+  html body .T-I.T-I-KE.L3 {
+    background: none !important;
+    background-color: transparent !important;
+    border: 1.5px solid rgba(244, 132, 155, 0.7) !important;
+    color: #74454f !important;
+    box-shadow: none !important;
+  }
+  html body .T-I.T-I-KE.L3:is(:hover, :focus-visible, .T-I-JW) {
+    background-color: rgba(244, 132, 155, 0.13) !important;
+    border-color: rgb(244, 132, 155) !important;
+    box-shadow: none !important;
+  }
+  /* El PNG del lápiz se usa como máscara para poder pintarlo de rosa claro */
+  html body .T-I.T-I-KE.L3::before {
+    background-image: none !important;
+    background-color: #74454f !important;
+    -webkit-mask: url("https://www.gstatic.com/images/icons/material/system_gm/1x/create_black_20dp.png") 50% 50% / 20px auto no-repeat !important;
+    mask: url("https://www.gstatic.com/images/icons/material/system_gm/1x/create_black_20dp.png") 50% 50% / 20px auto no-repeat !important;
+  }
+
+  /* Elemento activo de la barra lateral (Inbox u otro): tinte rosa al 13 %, texto en rosa
+     claro e icono en rosa base. Clases comprobadas: .aim.ain > .TO.aBP.nZ.aiq; el icono es
+     .qj con un PNG de fondo (repetido en su ::before). */
+  html body .aim .TO.nZ {
+    background-color: rgba(244, 132, 155, 0.13) !important;
+    box-shadow: none !important;
+  }
+  html body .aim .TO.nZ:is(:hover, .NQ) {
+    background-color: rgba(244, 132, 155, 0.2) !important;
+  }
+  html body .aim .TO.nZ :is(.nU, .nU a, .J-Ke.n0, .bsU) {
+    color: #74454f !important;
+  }
+  /* El icono cambia según la sección activa (inbox, sent...) y CSS no puede reutilizar su
+     URL como máscara, así que se recolorea con un filtro: brightness(0) lo deja en negro
+     sea cual sea su color, y el resto de la cadena lleva ese negro a rgb(244, 132, 155)
+     pre-filtro (= #D85A74 en pantalla). Probado en Gmail con el glifo de Inbox. */
+  html body .aim .TO.nZ .qj {
+    filter: brightness(0) saturate(100%) invert(64%) sepia(51%) saturate(1478%) hue-rotate(304deg) brightness(110%) contrast(91%) !important;
   }
 
   /* Resto del menú lateral (subsecciones, etiquetas, "More"): sin fondo */
