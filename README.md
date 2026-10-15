@@ -1,3 +1,23 @@
+# Arrosa for Gmail
+
+Fork of [Gmail Auto Dark Mode](https://github.com/renefs/gmail-auto-dark-mode) by Rene Fernandez, by BURU labs.
+It keeps the original automatic dark mode untouched and adds a pink color layer on top:
+
+- Unread messages: pink sender and subject, plus a pink marker bar
+- Read messages: muted grey text, same black background as unread
+- Compose button and the selected folder filled in pink
+- Gmail's blue accents (cursor bar, text selection, Send button, Unsubscribe link) turned pink
+- Email content is left untouched
+
+All Arrosa changes live in `extension/arrosa.css` (plus the recolored icons and the manifest),
+so `content.js` stays identical to upstream and upstream updates can be merged cleanly.
+
+Gmail is a trademark of Google LLC. This project is not affiliated with or endorsed by Google.
+
+---
+
+*Original README follows.*
+
 # Gmail Auto Dark Mode
 
 Automatically applies a dark theme to Gmail when your OS is in dark mode — and reverts instantly when you switch back.

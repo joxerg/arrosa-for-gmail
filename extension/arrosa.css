@@ -1,0 +1,110 @@
+/* Arrosa for Gmail — Copyright (c) 2026 BURU labs — MIT License (ver LICENSE).
+   Capa de color de Arrosa sobre el modo oscuro de content.js (Gmail Auto Dark Mode,
+   de Rene Fernandez). Va en un archivo aparte para que content.js quede intacto y las
+   actualizaciones del repositorio original se puedan traer sin conflictos.
+   Los colores están en espacio PRE-filtro: content.js invierte la página, así que un
+   valor claro se ve oscuro y #ff749d se ve como un rosa vivo (~#f75b89).
+   Solo actúa con el modo oscuro del sistema, igual que content.js.
+   "html body" sube la especificidad para ganar a las reglas !important de content.js. */
+
+@media (prefers-color-scheme: dark) {
+
+  /* Compose y sección seleccionada: relleno. Pedido: #E11D48, demasiado saturado para lo
+     que el filtro de inversión puede mostrar; #ff8aa1 es el más cercano que conserva el
+     tono (~#d4516a en pantalla). */
+  html body .T-I.T-I-KE.L3,
+  html body .TO.nZ,
+  html body .aim.ain .TO {
+    background-color: #ff8aa1 !important;
+  }
+
+  /* Resto del menú lateral (subsecciones, etiquetas, "More"): sin fondo */
+  html body .n6,
+  html body .bhZ.n3,
+  html body .J-Ke.n0 {
+    background-color: transparent !important;
+  }
+
+  /* Filas: leídos y no leídos con el mismo fondo negro. Solo en la fila, nunca en las
+     celdas: la celda del marcador de importante se des-invierte y saldría blanca. */
+  html body tr.zA:is(.yO, .zE):not(.x7):not(:hover) {
+    background-color: #ffffff !important;
+  }
+
+  /* Hover: rosa oscuro suave en lugar del azulado de Gmail */
+  html body tr.zA:hover {
+    background-color: #fff0f3 !important;
+  }
+
+  /* Filas seleccionadas con el checkbox */
+  html body tr.zA.x7:not(:hover) {
+    background-color: #ffe4ed !important;
+  }
+
+  /* No leídos: barra rosa a la izquierda, remitente y asunto en rosa vivo */
+  html body tr.zA.zE > td:first-child {
+    box-shadow: inset 4px 0 0 #ff749d !important;
+  }
+  html body tr.zA.zE .yW,
+  html body tr.zA.zE .yW *,
+  html body tr.zA.zE .bog,
+  html body tr.zA.zE .bqe {
+    color: #ff749d !important;
+    font-weight: 700 !important;
+  }
+  html body tr.zA.zE .xW,
+  html body tr.zA.zE .xW * {
+    color: #000000 !important;
+    font-weight: 700 !important;
+  }
+
+  /* Leídos: texto gris atenuado, sin negrita */
+  html body tr.zA.yO .yW,
+  html body tr.zA.yO .yW *,
+  html body tr.zA.yO .bog,
+  html body tr.zA.yO .bqe,
+  html body tr.zA.yO .y2,
+  html body tr.zA.yO .xW,
+  html body tr.zA.yO .xW * {
+    color: #5a5f66 !important;
+    font-weight: 400 !important;
+  }
+
+  /* Barra vertical del cursor (la fila en la que estás): Gmail la pinta como un ::before
+     de 3px en la celda td.PF.PE. Rosa sutil, distinto del rosa vivo de los no leídos. */
+  html body tr.zA > td.PE::before {
+    background-color: #f6a7c7 !important;
+  }
+
+  /* Texto seleccionado: fondo rosa en lugar del azul claro */
+  html body ::selection {
+    background-color: #ff749d !important;
+    color: #ffffff !important;
+  }
+
+  /* Enlace "Unsubscribe" de la cabecera del mensaje. El cuerpo de los emails (.a3s) no se
+     toca: sus colores son los del propio email. */
+  html body .Ca {
+    color: #ff749d !important;
+  }
+
+  /* Botón Send y su flecha de programar envío: Gmail marca ambos (y el resto de botones
+     primarios azules) con .T-I-atl, también en hover (.T-I-JW). */
+  html body .T-I.aoO,
+  html body .T-I.T-I-atl,
+  html body .T-I.T-I-atl.T-I-JW {
+    background-color: #ff749d !important;
+  }
+  /* Halo de foco/hover alrededor de Send: rosa sutil (~#9c4468) en lugar del azulado */
+  html body .T-I.T-I-atl:is(:focus, :active, .T-I-JW) {
+    box-shadow: 0 0 0 3px #f6a7c7 !important;
+    outline-color: #f6a7c7 !important;
+  }
+
+  /* Icono "Schedule send" del desplegable: es un PNG azul (schedule_send_googblue) que la
+     original des-invierte. Se gira el tono a rosa ANTES de la des-inversión, así la
+     inversión de la página lo anula y queda el rosa. */
+  html body .J-N.yr .J-N-JX {
+    filter: hue-rotate(125deg) saturate(1.3) saturate(0.909091) contrast(1.176471) brightness(0.833333) hue-rotate(180deg) invert(1) !important;
+  }
+}
