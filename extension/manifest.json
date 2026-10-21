@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Arrosa for Gmail",
   "author": "BURU labs",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Automatic dark mode for Gmail with pink accents and clear unread/read contrast. Based on Gmail Auto Dark Mode.",
   "icons": {
     "16": "icons/icon16.png",
