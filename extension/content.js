@@ -1,6 +1,6 @@
 /**
  * Detects the system preference and applies the dark style.
- * Implements an observer and intervals to react to theme changes and DOM updates in real time.
+ * Reacts to theme changes and DOM updates through observers and events, without polling.
  */
 
 (() => {
@@ -267,25 +267,6 @@
   };
 
   /**
-   * Tags monochrome dark SVG icons once so the 500 ms interval does not re-measure the
-   * whole icon set on every tick.
-   */
-  const keepMonochromeIconsInverted = (doc = document) => {
-    const view = doc.defaultView || window;
-    doc.querySelectorAll('svg').forEach(svg => {
-      if (svg.dataset.autoDarkIconChecked) return;
-      try {
-        svg.dataset.autoDarkIconChecked = '1';
-        if (isMonochromeDarkIcon(svg, view)) {
-          svg.classList.add('auto-dark-keep-inverted');
-        }
-      } catch (e) {
-        // Ignore cross-origin or detached node errors
-      }
-    });
-  };
-
-  /**
    * A 1x1 transparent spacer GIF is not artwork. Gmail sets one as the background image of
    * the search input, and counter-inverting on that basis turned the typed query dark on a
    * dark field while the autocomplete suffix, which lives in a separate element, stayed
@@ -313,54 +294,224 @@
   };
 
   /**
-   * Dynamically finds any element with a computed background-image (e.g. set via a CSS class)
-   * and tags it: monochrome gstatic sprites get the exemption, everything else gets the
-   * counter-inversion.
+   * Classification engine.
+   *
+   * The original version re-walked every div/span/a/li/button/img on a 500 ms interval and
+   * called getComputedStyle on each untagged one, twice per tick, with a class write after
+   * every read. On a loaded inbox that is ~6,900 style reads per pass and a 60-150 ms long
+   * task twice a second, growing with the DOM the longer the tab stays open.
+   *
+   * Now each element is classified once, when it appears or when its own class/style
+   * changes, in batches that read everything first and write the classes afterwards. A slow
+   * idle-time sweep (every SWEEP_INTERVAL_MS) re-checks untagged elements to catch what no
+   * mutation reports: stylesheets that arrive late, or an ancestor class change giving a
+   * descendant a background image. Tagging rules are the same as before; tags stay sticky.
    */
-  const counterInvertDynamicBackgrounds = (doc = document) => {
-    const view = doc.defaultView || window;
-    const elements = doc.querySelectorAll('div, span, a, li, button, img, [style*="background"]');
-    elements.forEach(el => {
-      if (el.classList.contains('auto-dark-counter-invert') || el.classList.contains('auto-dark-keep-inverted')) return;
-      // An img that has not finished loading reports 0x0, which would look like a spacer.
-      // Skip it and let the next interval tick classify it.
-      if (el.tagName.toLowerCase() === 'img' && !el.complete) return;
+  const COUNTER_CLASS = 'auto-dark-counter-invert';
+  const KEEP_CLASS = 'auto-dark-keep-inverted';
+  const SCAN_SELECTOR = 'div, span, a, li, button, img, [style*="background"]';
+  const FLUSH_BUDGET_MS = 8;
+  const SWEEP_INTERVAL_MS = 5000;
+  const SMALL_SUBTREE = 300;
+  const OBSERVE_OPTIONS = { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] };
+
+  const pending = new Set();
+  const pendingSvgs = new Set();
+  let flushScheduled = false;
+
+  const isTagged = (el) => el.classList.contains(COUNTER_CLASS) || el.classList.contains(KEEP_CLASS);
+
+  const queueElement = (el) => {
+    if (el.matches(SCAN_SELECTOR) && !isTagged(el)) pending.add(el);
+    if (el.localName === 'svg' && !el.dataset.autoDarkIconChecked) pendingSvgs.add(el);
+  };
+
+  const queueTree = (root) => {
+    queueElement(root);
+    if (!root.firstElementChild) return;
+    for (const el of root.querySelectorAll(SCAN_SELECTOR)) {
+      if (!isTagged(el)) pending.add(el);
+    }
+    for (const svg of root.querySelectorAll('svg')) {
+      if (!svg.dataset.autoDarkIconChecked) pendingSvgs.add(svg);
+    }
+  };
+
+  const scheduleFlush = () => {
+    if (flushScheduled || (!pending.size && !pendingSvgs.size)) return;
+    flushScheduled = true;
+    // rAF runs before the next paint, so new elements are tagged in the frame they first
+    // show up in. Hidden tabs get no rAF; a timer keeps the queue from piling up there.
+    if (document.hidden) setTimeout(flush, 250);
+    else requestAnimationFrame(flush);
+  };
+
+  // Decides the class for one element without touching the DOM (same rules as before).
+  const classify = (el) => {
+    if (!el.isConnected || isTagged(el)) return null;
+    // An img that has not finished loading reports 0x0, which would look like a spacer.
+    // Its load/error event queues it again.
+    if (el.localName === 'img' && !el.complete) return null;
+    const view = el.ownerDocument.defaultView || window;
+    const bg = el.style.backgroundImage || view.getComputedStyle(el).backgroundImage;
+    if (!bg || bg === 'none' || !bg.includes('url(')) return null;
+    return keepsItsOwnColors(el, bg) ? KEEP_CLASS : COUNTER_CLASS;
+  };
+
+  const flush = () => {
+    flushScheduled = false;
+    if (!isDarkActive()) {
+      pending.clear();
+      pendingSvgs.clear();
+      return;
+    }
+    const start = performance.now();
+    const writes = [];
+    // Reads only, until the budget runs out; what is left goes to the next frame.
+    for (const el of pending) {
+      pending.delete(el);
       try {
-        const bg = el.style.backgroundImage || view.getComputedStyle(el).backgroundImage;
-        if (!bg || bg === 'none' || !bg.includes('url(')) return;
-        el.classList.add(keepsItsOwnColors(el, bg) ? 'auto-dark-keep-inverted' : 'auto-dark-counter-invert');
+        const cls = classify(el);
+        if (cls) writes.push(el, cls);
       } catch (e) {
         // Ignore stylesheet security or cross-origin access errors
       }
-    });
+      if (performance.now() - start > FLUSH_BUDGET_MS) break;
+    }
+    const svgWrites = [];
+    for (const svg of pendingSvgs) {
+      pendingSvgs.delete(svg);
+      if (!svg.isConnected || svg.dataset.autoDarkIconChecked) continue;
+      try {
+        svgWrites.push(svg, isMonochromeDarkIcon(svg, svg.ownerDocument.defaultView || window));
+      } catch (e) {
+        // Ignore cross-origin or detached node errors
+      }
+      if (performance.now() - start > FLUSH_BUDGET_MS) break;
+    }
+    // Writes, all together, so the style reads above never force a recalculation per element.
+    for (let i = 0; i < writes.length; i += 2) writes[i].classList.add(writes[i + 1]);
+    for (let i = 0; i < svgWrites.length; i += 2) {
+      svgWrites[i].dataset.autoDarkIconChecked = '1';
+      if (svgWrites[i + 1]) svgWrites[i].classList.add(KEEP_CLASS);
+    }
+    scheduleFlush();
   };
 
   /**
-   * Finds all same-origin subframes and injects the counter-inversion styles
-   * directly into their documents. This bypasses Chrome content script injection
-   * limitations for dynamic, parent-written blank iframes.
+   * Same-origin subframes (Gmail writes some about:blank iframes itself, where Chrome does
+   * not always inject the content script) get the counter-inversion styles and their own
+   * observer, keyed by document because document.open() replaces it.
    */
+  const observedDocs = new WeakSet();
+
+  const ensureSubframeStyle = (doc) => {
+    if (doc.getElementById('auto-dark-gmail-styles-subframe')) return;
+    const styleTag = doc.createElement('style');
+    styleTag.id = 'auto-dark-gmail-styles-subframe';
+    styleTag.textContent = COUNTER_INVERT_CSS;
+    (doc.head || doc.documentElement).appendChild(styleTag);
+  };
+
+  const handleSubframe = (iframe) => {
+    try {
+      const doc = iframe.contentDocument;
+      if (!doc || !doc.documentElement) return;
+      ensureSubframeStyle(doc);
+      if (observedDocs.has(doc)) return;
+      observedDocs.add(doc);
+      new MutationObserver((records) => {
+        if (!isDarkActive()) return;
+        ensureSubframeStyle(doc);
+        onMutations(records);
+      }).observe(doc.documentElement, OBSERVE_OPTIONS);
+      queueTree(doc.documentElement);
+      scheduleFlush();
+    } catch (e) {
+      // Ignore cross-origin access errors (handled by direct matches injection)
+    }
+  };
+
   const injectStylesIntoSubframes = () => {
-    const iframes = document.querySelectorAll('iframe');
-    iframes.forEach(iframe => {
-      try {
-        const doc = iframe.contentDocument || iframe.contentWindow.document;
-        if (doc) {
-          const styleTag = doc.getElementById('auto-dark-gmail-styles-subframe');
-          if (!styleTag) {
-            const newStyleTag = doc.createElement('style');
-            newStyleTag.id = 'auto-dark-gmail-styles-subframe';
-            newStyleTag.textContent = COUNTER_INVERT_CSS;
-            (doc.head || doc.documentElement).appendChild(newStyleTag);
-          }
-          // Scan and tag dynamic backgrounds inside this subframe
-          counterInvertDynamicBackgrounds(doc);
-          keepMonochromeIconsInverted(doc);
+    document.querySelectorAll('iframe').forEach(handleSubframe);
+  };
+
+  const onMutations = (records) => {
+    for (const r of records) {
+      if (r.type === 'childList') {
+        for (const node of r.addedNodes) {
+          if (node.nodeType !== 1) continue;
+          queueTree(node);
+          if (isTopFrame && node.localName === 'iframe') handleSubframe(node);
+          if (node.localName === 'style' || node.localName === 'link') scheduleSweep(200);
         }
-      } catch (e) {
-        // Ignore cross-origin access errors (handled by direct matches injection)
+        continue;
       }
+      const el = r.target;
+      if (isTagged(el)) continue;
+      if (r.attributeName === 'style') {
+        queueElement(el);
+      } else if (el.getElementsByTagName('*').length <= SMALL_SUBTREE) {
+        queueTree(el);
+      } else {
+        queueElement(el);
+      }
+    }
+    scheduleFlush();
+  };
+
+  const observer = new MutationObserver((records) => {
+    // Gmail is a SPA and may remove injected styles; put ours back if it went away.
+    if (!document.getElementById('auto-dark-gmail-styles')) applyTheme();
+    if (isDarkActive()) onMutations(records);
+  });
+  let observing = false;
+
+  /**
+   * Idle-time safety net: re-checks every untagged element in small slices, so it never
+   * becomes a long task. Also re-attaches to same-origin subframes and re-sends the dark
+   * state to child frames (cheap; children ignore a state they already have).
+   */
+  let sweepTimer = 0;
+  let sweepList = null;
+  let sweepIndex = 0;
+  const idle = window.requestIdleCallback || ((cb) => setTimeout(() => cb({ timeRemaining: () => 8 }), 50));
+
+  const scheduleSweep = (delay = SWEEP_INTERVAL_MS) => {
+    clearTimeout(sweepTimer);
+    sweepTimer = setTimeout(() => {
+      if (!isDarkActive()) return;
+      sweepList = document.querySelectorAll(SCAN_SELECTOR);
+      sweepIndex = 0;
+      if (isTopFrame) injectStylesIntoSubframes();
+      broadcastDarkToChildren(true);
+      idle(sweepSlice);
+    }, delay);
+  };
+
+  const sweepSlice = (deadline) => {
+    if (!sweepList || !isDarkActive()) return;
+    const writes = [];
+    while (sweepIndex < sweepList.length && deadline.timeRemaining() > 2) {
+      const el = sweepList[sweepIndex++];
+      try {
+        const cls = classify(el);
+        if (cls) writes.push(el, cls);
+      } catch (e) {
+        // Ignore stylesheet security or cross-origin access errors
+      }
+    }
+    for (let i = 0; i < writes.length; i += 2) writes[i].classList.add(writes[i + 1]);
+    if (sweepIndex < sweepList.length) {
+      idle(sweepSlice);
+      return;
+    }
+    sweepList = null;
+    document.querySelectorAll('svg').forEach(svg => {
+      if (!svg.dataset.autoDarkIconChecked) pendingSvgs.add(svg);
     });
+    scheduleFlush();
+    scheduleSweep();
   };
 
   const applyTheme = () => {
@@ -381,81 +532,97 @@
       newStyleTag.textContent = isTopFrame ? TOP_FRAME_CSS : COUNTER_INVERT_CSS;
       (document.head || document.documentElement).appendChild(newStyleTag);
     }
-
-    // Tag any elements whose background image is set via a CSS class so they get counter-inverted too.
-    counterInvertDynamicBackgrounds();
-    keepMonochromeIconsInverted();
   };
 
-  // Learn the dark state from an ancestor frame (see ancestorDark), apply it locally,
-  // and relay it onward to our own child frames (for deeply nested widgets).
-  window.addEventListener('message', (event) => {
-    const data = event.data;
-    if (!data || data.__autoDarkGmail !== true || !isTrustedOrigin(event.origin)) return;
-    ancestorDark = !!data.dark;
+  // Reacts to the effective dark state turning on or off (system setting or ancestor frame).
+  let lastDark = null;
+  const onThemeChange = () => {
+    const dark = isDarkActive();
     applyTheme();
-    if (isDarkActive()) {
-      counterInvertDynamicBackgrounds();
-    }
-    broadcastDarkToChildren(isDarkActive());
-  });
-
-  // Initial execution (may run before <head> exists at document_start)
-  applyTheme();
-
-  // Set a safe periodic interval to ensure style permanence, inject styles into subframes,
-  // capture dynamically loaded background icons, and keep child frames in sync.
-  setInterval(() => {
-    applyTheme();
-    if (isDarkActive()) {
-      counterInvertDynamicBackgrounds();
-      if (isTopFrame) {
-        injectStylesIntoSubframes();
+    if (dark === lastDark) return;
+    lastDark = dark;
+    if (dark) {
+      if (!observing) {
+        observer.observe(document.documentElement, OBSERVE_OPTIONS);
+        observing = true;
       }
-    }
-    broadcastDarkToChildren(isDarkActive());
-  }, 500);
-
-  // Re-apply once the DOM is ready so the style is properly placed in <head>
-  // and survives Gmail's initial DOM setup. Then narrow the observer to <head>
-  // or documentElement.
-  document.addEventListener('DOMContentLoaded', () => {
-    applyTheme();
-    observer.disconnect();
-    if (isDarkActive()) {
-      observer.observe(document.head || document.documentElement, { childList: true });
-      if (isTopFrame) {
-        injectStylesIntoSubframes();
-      }
-    }
-    broadcastDarkToChildren(isDarkActive());
-  });
-
-  // Listen for changes in the system preference (Light/Dark).
-  // Connect/disconnect the observer as dark mode turns on/off, and notify child frames.
-  darkModeQuery.addEventListener('change', () => {
-    applyTheme();
-    if (isDarkActive()) {
-      observer.observe(document.head || document.documentElement, { childList: true });
-      if (isTopFrame) {
-        injectStylesIntoSubframes();
-      }
+      queueTree(document.documentElement);
+      scheduleFlush();
+      if (isTopFrame) injectStylesIntoSubframes();
+      scheduleSweep();
     } else {
       observer.disconnect();
+      observing = false;
+      clearTimeout(sweepTimer);
+      sweepList = null;
+      pending.clear();
+      pendingSvgs.clear();
     }
-    broadcastDarkToChildren(isDarkActive());
+    broadcastDarkToChildren(dark);
+  };
+
+  // Learn the dark state from an ancestor frame (see ancestorDark). Only a change does any
+  // work; it is then relayed onward to our own child frames (for deeply nested widgets).
+  window.addEventListener('message', (event) => {
+    const data = event.data;
+    if (!data || !isTrustedOrigin(event.origin)) return;
+    if (data.__autoDarkGmailHello === true && event.source) {
+      // A child frame just started and asks for the current state.
+      try {
+        event.source.postMessage({ __autoDarkGmail: true, dark: isDarkActive() }, '*');
+      } catch (e) {
+        // Ignore frames we cannot post to
+      }
+      return;
+    }
+    if (data.__autoDarkGmail !== true) return;
+    ancestorDark = !!data.dark;
+    onThemeChange();
   });
 
-  // Reapply styles if <head> changes (Gmail is a SPA and may remove injected styles).
-  // Debouncing avoids excessive calls caused by Gmail's frequent DOM mutations.
-  let debounceTimer;
-  const observer = new MutationObserver(() => {
-    if (document.getElementById('auto-dark-gmail-styles')) return;
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(applyTheme, 50);
-  });
+  // Images that were still loading when first seen, iframes that (re)load and late
+  // stylesheets: load/error do not bubble, but a capturing listener still sees them.
+  const onResourceEvent = (event) => {
+    if (!isDarkActive()) return;
+    const el = event.target;
+    if (!el || el.nodeType !== 1) return;
+    if (el.localName === 'img') {
+      queueElement(el);
+      scheduleFlush();
+    } else if (el.localName === 'iframe') {
+      if (isTopFrame) handleSubframe(el);
+      try {
+        el.contentWindow.postMessage({ __autoDarkGmail: true, dark: true }, '*');
+      } catch (e) {
+        // Ignore frames we cannot post to
+      }
+    } else if (el.localName === 'link') {
+      scheduleSweep(200);
+    }
+  };
+  document.addEventListener('load', onResourceEvent, true);
+  document.addEventListener('error', onResourceEvent, true);
 
-  // Start with broad observation since <head> may not exist yet at document_start.
-  // Narrowed to <head> or documentElement once DOMContentLoaded fires.
-  observer.observe(document.documentElement, { childList: true, subtree: true });
+  // Listen for changes in the system preference (Light/Dark).
+  darkModeQuery.addEventListener('change', onThemeChange);
+
+  // Initial execution (may run before <head> exists at document_start). The observer also
+  // sees everything the parser inserts from here on.
+  onThemeChange();
+  if (!isTopFrame) {
+    try {
+      window.parent.postMessage({ __autoDarkGmailHello: true }, '*');
+    } catch (e) {
+      // Ignore frames we cannot post to
+    }
+  }
+
+  // Re-apply once the DOM is ready so the style is properly placed in <head>.
+  document.addEventListener('DOMContentLoaded', () => {
+    applyTheme();
+    if (isDarkActive()) {
+      if (isTopFrame) injectStylesIntoSubframes();
+      broadcastDarkToChildren(true);
+    }
+  });
 })();
